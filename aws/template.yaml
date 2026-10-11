@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: JalSentry - Environmental Decision Support MVP for Heat and Water Track (API Gateway, Lambda, DynamoDB)
+
+Globals:
+  Function:
+    Timeout: 15
+    MemorySize: 256
+    Runtime: nodejs20.x
+    Architectures:
+      - arm64
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: prod
+    Description: Deployment stage environment
+
+Resources:
+  # ------------------------------------------------------------
+  # Amazon DynamoDB Single Table: JalSentry
+  # ------------------------------------------------------------
+  JalSentryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: JalSentry
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: JalSentry
+        - Key: Track
+          Value: HeatAndWater
+
+  # ------------------------------------------------------------
+  # Amazon API Gateway HTTP API v2
+  # ------------------------------------------------------------
+  JalSentryHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: prod
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+          - PATCH
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+        MaxAge: 600
+
+  # ------------------------------------------------------------
+  # AWS Lambda Function: JalSentry API Handler
+  # ------------------------------------------------------------
+  JalSentryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'jalsentry-api-${EnvironmentName}'
+      CodeUri: ../dist-lambda/
+      Handler: index.handler
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref JalSentryTable
+          NODE_ENV: production
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref JalSentryTable
+      Events:
+        ProxyApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref JalSentryHttpApi
+            Path: /api/v1/{proxy+}
+            Method: ANY
+        RootApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref JalSentryHttpApi
+            Path: /api/v1
+            Method: ANY
+        HealthApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref JalSentryHttpApi
+            Path: /health
+            Method: GET
+
+Outputs:
+  HttpApiUrl:
+    Description: HTTP API Gateway base endpoint URL
+    Value: !Sub 'https://${JalSentryHttpApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+    Export:
+      Name: JalSentryHttpApiUrl
+
+  DynamoDBTableName:
+    Description: DynamoDB Single Table Name
+    Value: !Ref JalSentryTable
+    Export:
+      Name: JalSentryTableName
+
+  FunctionArn:
+    Description: Lambda Function ARN
+    Value: !GetAtt JalSentryFunction.Arn
